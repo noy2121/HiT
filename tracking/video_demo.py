@@ -11,7 +11,7 @@ if env_path not in sys.path:
     sys.path.append(env_path)
 os.environ["CUDA_VISIBLE_DEVICES"]= "0"
 
-
+import logging
 def to_numpy(tensor):
     return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
 from lib.test.tracker.basetracker import BaseTracker
@@ -24,9 +24,15 @@ from lib.models.HiT import build_hit
 from lib.test.tracker.vittrack_utils import Preprocessor
 from lib.utils.box_ops import clip_box
 
+logger = logging.getLogger(__name__)
+
 
 class HiT:
-    def __init__(self, net):
+    def __init__(self, model_path):
+        onnx_model= onnx.load(model_path)
+        onnx.checker.check_model(onnx_model)
+        with torch.no_grad():
+            net = onnxruntime.InferenceSession(model_path,providers=['CUDAExecutionProvider'])
         self.net = net
         self.preprocessor = Preprocessor()
         self.state = None
@@ -84,22 +90,33 @@ def get_tracker_class():
     return HiT
 
 
-def run_video( net_path,videofilepath):
+def get_hit_tracker_class():
+    return HiT
+
+
+def save_predictions(output_boxes, output_dir):
+    """Save predictions. one txt file, one bbox per line."""
+    predictions_file = os.path.join(output_dir, 'predictions.txt')
+    with open(predictions_file, 'w') as f:
+        for frame_id, bbox in enumerate(output_boxes):
+            # frame_id, x, y, w, h
+            f.write(f"{frame_id+1},{bbox[0]:.3f},{bbox[1]:.3f},{bbox[2]:.3f},{bbox[3]:.3f}\n")
+    return predictions_file
+
+        
+def run_video(model_path, videofilepath, output_dir=None):
     """Run the tracker with the vieofile.
     args:
-        debug: Debug level.
+        net_path: Path to ONNX model
+        videofilepath: Path to video file
+        output_dir: Directory to save results
+        logger: Logger instance
     """
     optional_box = None
     # net = NetWithBackbone(net_path=net_path, use_gpu=True)
-    onnx_model= onnx.load(net_path)
-    onnx.checker.check_model(onnx_model)
-    with torch.no_grad():
-        ort_session = onnxruntime.InferenceSession(net_path,providers=['CUDAExecutionProvider'])
-
-    tracker = HiT(ort_session)
+    tracker = HiT(model_path)
 
     # create dataset
-
     assert os.path.isfile(videofilepath), "Invalid param {}".format(videofilepath)
     ", videofilepath must be a valid videofile"
 
@@ -116,8 +133,11 @@ def run_video( net_path,videofilepath):
         return {'init_bbox': box}
 
     if success is not True:
-        print("Read frame from {} failed.".format(videofilepath))
-        exit(-1)
+        if logger:
+            logger.error(f"Read frame from {videofilepath} failed.")
+        else:
+            print(f"Read frame from {videofilepath} failed.")
+            sys.exit(-1)
     if optional_box is not None:
         assert isinstance(optional_box, (list, tuple))
         assert len(optional_box) == 4, "valid box's foramt is [x,y,w,h]"
@@ -195,12 +215,22 @@ def run_video( net_path,videofilepath):
     torch.cuda.synchronize()
     end_all = time.time()
     total_time = end_all - start_all
-    print(f"\n--- Performance Metrics ---")
-    print(f"Total frames: {frame_count}")
-    print(f"Total time: {total_time:.2f} sec")
-    print(f"Tracker-only time: {tracker_time_total:.2f} sec")
-    print(f"FPS (total): {frame_count / total_time:.2f}")
-    print(f"FPS (tracker-only): {frame_count / tracker_time_total:.2f}")
+
+    logger.info("--- Performance Metrics ---")
+    logger.info(f"Total frames: {frame_count}")
+    logger.info(f"Total time: {total_time:.2f} sec")
+    logger.info(f"Tracker-only time: {tracker_time_total:.2f} sec")
+    logger.info(f"FPS (total): {frame_count / total_time:.2f}")
+    logger.info(f"FPS (tracker-only): {frame_count / tracker_time_total:.2f}")
+
+    # Save predictions if output directory is provided
+    if output_dir:
+        predictions_file = save_predictions(output_boxes, output_dir)
+        logger.info(f"Predictions saved to: {predictions_file}")
+        return predictions_file
+
+    return None
+
 
 def main():
     parser = argparse.ArgumentParser(description='Run the tracker on your webcam.')

@@ -70,9 +70,10 @@ class VT(nn.Module):
         bs, Nq, C, HW = opt.size()
         opt_feat = opt.view(-1, C, self.feat_sz_s, self.feat_sz_s)
         # run the corner head
-        outputs_coord = box_xyxy_to_cxcywh(self.box_head(opt_feat))
+        outputs_coord, prob_vec_tl, prob_vec_br = self.box_head(opt_feat, return_dist=True)
+        outputs_coord = box_xyxy_to_cxcywh(outputs_coord)
         outputs_coord_new = outputs_coord.view(bs, Nq, 4)
-        return outputs_coord_new
+        return outputs_coord_new, prob_vec_tl, prob_vec_br
 
 
 def to_numpy(tensor):
@@ -87,18 +88,17 @@ if __name__ == "__main__":
     config_module = importlib.import_module('lib.config.%s.config' % args.script)
     cfg = config_module.cfg
     config_module.update_config_from_file(yaml_fname)
-    save_name = prj_path+"/checkpoints/train/%s/%s/VT_ep%04d.onnx" % (args.script, args.config, cfg.TEST.EPOCH)
+    save_name = prj_path+"/checkpoints/%s/%s/VT_ep%04d_with_corner_preds.onnx" % (args.script, args.config, cfg.TEST.EPOCH)
     # build the model
     model_module = importlib.import_module('lib.models.HiT')
     model_constructor = model_module.build_hit
     model = model_constructor(cfg)
     # load checkpoint
     if load_checkpoint:
-        save_dir = env_settings().save_dir
-        checkpoint_name = os.path.join(save_dir,
-                                       "./checkpoints/train/%s/%s/VT_ep%04d.pth.tar"
+        checkpoint_name = os.path.join(prj_path,
+                                       "./checkpoints/%s/%s/VT_ep%04d.pth.tar"
                                        % (args.script, args.config, cfg.TEST.EPOCH))
-        model.load_state_dict(torch.load(checkpoint_name, map_location='cpu')['net'], strict=True)
+        model.load_state_dict(torch.load(checkpoint_name, map_location='cpu', weights_only=False)['net'], strict=True)
     # merge conv+bn for levit
     if "LeViT" in cfg.MODEL.BACKBONE.TYPE:
         # merge conv+bn to one operator
@@ -127,7 +127,7 @@ if __name__ == "__main__":
                       opset_version=11,  # the ONNX version to export the model to
                       do_constant_folding=True,  # whether to execute constant folding for optimization
                       input_names=['search', 'template'],  # model's input names
-                      output_names=['outputs_coord_new'],  # the model's output names
+                      output_names=['outputs_coord_new', 'prob_vec_tl', 'prob_vec_tl'],  # the model's output names
                       # dynamic_axes={'input': {0: 'batch_size'},  # variable length axes
                       #               'output': {0: 'batch_size'}}
                       )

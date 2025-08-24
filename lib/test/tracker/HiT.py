@@ -68,7 +68,7 @@ class HiT(BaseTracker):
         with torch.no_grad():
             xz = self.network.forward_backbone(images_list)
             # run the head
-            out_dict, _, _ = self.network.forward_head(xz=xz)
+            out_dict, _, _, prob_vec_tl, prob_vec_br = self.network.forward_head(xz=xz)
 
         pred_boxes = out_dict['pred_boxes'].view(-1, 4)
         # Baseline: Take the mean of all pred boxes as the final result
@@ -97,9 +97,15 @@ class HiT(BaseTracker):
             all_boxes = self.map_box_back_batch(pred_boxes * self.params.search_size / resize_factor, resize_factor)
             all_boxes_save = all_boxes.view(-1).tolist()  # (4N, )
             return {"target_bbox": self.state,
+                    "prob_vec_tl": prob_vec_tl,
+                    "prob_vec_br": prob_vec_br,
                     "all_boxes": all_boxes_save}
         else:
-            return {"target_bbox": self.state}
+            return {
+                "target_bbox": self.state,
+                "prob_vec_tl": prob_vec_tl,
+                "prob_vec_br": prob_vec_br
+            }
 
     def map_box_back(self, pred_box: list, resize_factor: float):
         cx_prev, cy_prev = self.state[0] + 0.5 * self.state[2], self.state[1] + 0.5 * self.state[3]

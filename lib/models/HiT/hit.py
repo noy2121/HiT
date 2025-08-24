@@ -67,8 +67,8 @@ class HiT(nn.Module):
         output_embed = xz_mem[0:1,:,:].unsqueeze(-2)
         x_mem = xz_mem[1:1+self.num_patch_x]
         # Forward the corner head
-        out, outputs_coord = self.forward_box_head(output_embed, x_mem)
-        return out, outputs_coord, output_embed
+        out, outputs_coord, prob_vec_tl, prob_vec_br = self.forward_box_head(output_embed, x_mem)
+        return out, outputs_coord, output_embed, prob_vec_tl, prob_vec_br
 
     def forward_box_head(self, hs, memory):
         """
@@ -83,10 +83,11 @@ class HiT(nn.Module):
             bs, Nq, C, HW = opt.size()
             opt_feat = opt.view(-1, C, self.feat_sz_s, self.feat_sz_s)
             # run the corner head
-            outputs_coord = box_xyxy_to_cxcywh(self.box_head(opt_feat))
+            outputs_coord, prob_vec_tl, prob_vec_br = self.box_head(opt_feat, return_dist=True)
+            outputs_coord = box_xyxy_to_cxcywh(outputs_coord)
             outputs_coord_new = outputs_coord.view(bs, Nq, 4)
             out = {'pred_boxes': outputs_coord_new}
-            return out, outputs_coord_new
+            return out, outputs_coord_new, prob_vec_tl, prob_vec_br
         elif self.head_type == "CORNER_WOATT":
             enc_opt = memory[-self.feat_len_s:].transpose(0, 1).permute(0,2,1)#(B,C,HW)
             bs, C, HW = enc_opt.size()
